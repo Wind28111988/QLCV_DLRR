@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Task, TaskStatus, TaskComplexity } from './types';
 import { INITIAL_USERS, INITIAL_TASKS } from './constants';
-import { Menu, Loader2, CloudSync } from 'lucide-react';
+import { Menu, Loader2, RefreshCw } from 'lucide-react';
 import { cloudStorage } from './storage';
 import Login from './components/Login';
 import ChangePassword from './components/ChangePassword';
@@ -25,10 +25,8 @@ const App: React.FC = () => {
   const [viewedUserId, setViewedUserId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  // Refs để theo dõi thay đổi và tránh sync vòng lặp
   const initialLoadDone = useRef(false);
 
-  // Tải dữ liệu ban đầu từ Cloud (Vercel KV)
   useEffect(() => {
     const initData = async () => {
       try {
@@ -43,7 +41,6 @@ const App: React.FC = () => {
         const savedUser = localStorage.getItem('tm_current_user');
         if (savedUser) {
           const parsedUser = JSON.parse(savedUser);
-          // Kiểm tra xem user còn tồn tại trong list mới không
           const stillExists = cloudUsers.find(u => u.id === parsedUser.id);
           if (stillExists) setCurrentUser(stillExists);
         }
@@ -57,7 +54,6 @@ const App: React.FC = () => {
     initData();
   }, []);
 
-  // Sync dữ liệu lên Cloud khi có thay đổi
   useEffect(() => {
     if (!initialLoadDone.current) return;
     
@@ -70,7 +66,7 @@ const App: React.FC = () => {
       setIsSyncing(false);
     };
 
-    const timer = setTimeout(sync, 1000); // Debounce sync 1s
+    const timer = setTimeout(sync, 1000);
     return () => clearTimeout(timer);
   }, [users, tasks]);
 
@@ -152,7 +148,6 @@ const App: React.FC = () => {
     alert('Dữ liệu đã được cập nhật thành công và đang đồng bộ lên đám mây!');
   };
 
-  // Màn hình loading khi mới vào app
   if (isInitialLoading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50">
@@ -187,14 +182,13 @@ const App: React.FC = () => {
         onClose={() => setIsSidebarOpen(false)}
       />
       
-      {/* Mobile Top Bar */}
       <div className="md:hidden flex items-center justify-between px-4 py-3 bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
         <div className="flex items-center space-x-2">
           <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-black text-lg">Q</div>
           <span className="font-black text-slate-800 uppercase tracking-tight text-sm">Quản lý GDT</span>
         </div>
         <div className="flex items-center space-x-2">
-          {isSyncing && <CloudSync className="text-indigo-400 animate-pulse" size={18} />}
+          {isSyncing && <RefreshCw className="text-indigo-400 animate-spin" size={18} />}
           <button 
             onClick={() => setIsSidebarOpen(true)}
             className="p-2 text-slate-500 hover:bg-slate-100 rounded-xl transition-all active:scale-95"
@@ -214,7 +208,7 @@ const App: React.FC = () => {
               {activeTab === 'delegate' && 'Giao nhiệm vụ'}
               {activeTab === 'import' && 'Nhập dữ liệu'}
               {activeTab === 'profile' && 'Cá nhân'}
-              {isSyncing && <CloudSync className="text-indigo-400 animate-pulse hidden md:block" size={24} />}
+              {isSyncing && <RefreshCw className="text-indigo-400 animate-spin hidden md:block" size={24} />}
             </h1>
             <p className="text-slate-500 text-sm font-medium mt-1">
               Đơn vị: <span className="text-indigo-600 font-bold">{currentUser.unit}</span>
