@@ -1,8 +1,9 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { User, Task, TaskStatus, TaskComplexity } from './types';
-import { INITIAL_USERS, INITIAL_TASKS, DEFAULT_PASSWORD } from './constants';
-import { Menu, X } from 'lucide-react';
+import { INITIAL_USERS, INITIAL_TASKS } from './constants';
+import { Menu, Loader2, CloudSync } from 'lucide-react';
+import { cloudStorage } from './storage';
 import Login from './components/Login';
 import ChangePassword from './components/ChangePassword';
 import Sidebar from './components/Sidebar';
@@ -14,32 +15,64 @@ import ImportData from './components/ImportData';
 import UserProfile from './components/UserProfile';
 
 const App: React.FC = () => {
-  const [users, setUsers] = useState<User[]>(() => {
-    const saved = localStorage.getItem('tm_users');
-    return saved ? JSON.parse(saved) : INITIAL_USERS;
-  });
-
-  const [tasks, setTasks] = useState<Task[]>(() => {
-    const saved = localStorage.getItem('tm_tasks');
-    return saved ? JSON.parse(saved) : INITIAL_TASKS;
-  });
-
-  const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('tm_current_user');
-    return saved ? JSON.parse(saved) : null;
-  });
-
+  const [users, setUsers] = useState<User[]>(INITIAL_USERS);
+  const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
+  
   const [activeTab, setActiveTab] = useState<'dashboard' | 'tasks' | 'search' | 'delegate' | 'import' | 'profile'>('dashboard');
   const [viewedUserId, setViewedUserId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  useEffect(() => {
-    localStorage.setItem('tm_users', JSON.stringify(users));
-  }, [users]);
+  // Refs để theo dõi thay đổi và tránh sync vòng lặp
+  const initialLoadDone = useRef(false);
 
+  // Tải dữ liệu ban đầu từ Cloud (Vercel KV)
   useEffect(() => {
-    localStorage.setItem('tm_tasks', JSON.stringify(tasks));
-  }, [tasks]);
+    const initData = async () => {
+      try {
+        const [cloudUsers, cloudTasks] = await Promise.all([
+          cloudStorage.get<User[]>('gdt_users', INITIAL_USERS),
+          cloudStorage.get<Task[]>('gdt_tasks', INITIAL_TASKS)
+        ]);
+        
+        setUsers(cloudUsers);
+        setTasks(cloudTasks);
+
+        const savedUser = localStorage.getItem('tm_current_user');
+        if (savedUser) {
+          const parsedUser = JSON.parse(savedUser);
+          // Kiểm tra xem user còn tồn tại trong list mới không
+          const stillExists = cloudUsers.find(u => u.id === parsedUser.id);
+          if (stillExists) setCurrentUser(stillExists);
+        }
+      } catch (err) {
+        console.error("Failed to load initial data", err);
+      } finally {
+        setIsInitialLoading(false);
+        initialLoadDone.current = true;
+      }
+    };
+    initData();
+  }, []);
+
+  // Sync dữ liệu lên Cloud khi có thay đổi
+  useEffect(() => {
+    if (!initialLoadDone.current) return;
+    
+    const sync = async () => {
+      setIsSyncing(true);
+      await Promise.all([
+        cloudStorage.set('gdt_users', users),
+        cloudStorage.set('gdt_tasks', tasks)
+      ]);
+      setIsSyncing(false);
+    };
+
+    const timer = setTimeout(sync, 1000); // Debounce sync 1s
+    return () => clearTimeout(timer);
+  }, [users, tasks]);
 
   useEffect(() => {
     if (currentUser) {
@@ -116,8 +149,18 @@ const App: React.FC = () => {
 
   const handleImport = (newUsers: User[]) => {
     setUsers(newUsers);
-    alert('Dữ liệu đã được cập nhật thành công!');
+    alert('Dữ liệu đã được cập nhật thành công và đang đồng bộ lên đám mây!');
   };
+
+  // Màn hình loading khi mới vào app
+  if (isInitialLoading) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50">
+        <Loader2 className="w-12 h-12 text-indigo-600 animate-spin mb-4" />
+        <p className="text-slate-500 font-bold uppercase tracking-widest text-xs">Đang đồng bộ dữ liệu đám mây...</p>
+      </div>
+    );
+  }
 
   if (!currentUser) {
     return <Login users={users} onLogin={handleLogin} onResetPassword={handleResetPassword} />;
@@ -150,25 +193,28 @@ const App: React.FC = () => {
           <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-black text-lg">Q</div>
           <span className="font-black text-slate-800 uppercase tracking-tight text-sm">Quản lý GDT</span>
         </div>
-        <button 
-          onClick={() => setIsSidebarOpen(true)}
-          className="p-2 text-slate-500 hover:bg-slate-100 rounded-xl transition-all active:scale-95"
-          aria-label="Open Menu"
-        >
-          <Menu size={24} />
-        </button>
+        <div className="flex items-center space-x-2">
+          {isSyncing && <CloudSync className="text-indigo-400 animate-pulse" size={18} />}
+          <button 
+            onClick={() => setIsSidebarOpen(true)}
+            className="p-2 text-slate-500 hover:bg-slate-100 rounded-xl transition-all active:scale-95"
+          >
+            <Menu size={24} />
+          </button>
+        </div>
       </div>
 
       <main className="flex-1 p-4 md:p-8 lg:p-10 max-w-full">
         <header className="mb-6 md:mb-10 flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4">
           <div className="animate-in slide-in-from-left duration-500">
-            <h1 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight">
+            <h1 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight flex items-center gap-3">
               {activeTab === 'dashboard' && 'Tổng quan'}
               {activeTab === 'tasks' && 'Việc của tôi'}
               {activeTab === 'search' && 'Báo cáo & Tra cứu'}
               {activeTab === 'delegate' && 'Giao nhiệm vụ'}
               {activeTab === 'import' && 'Nhập dữ liệu'}
               {activeTab === 'profile' && 'Cá nhân'}
+              {isSyncing && <CloudSync className="text-indigo-400 animate-pulse hidden md:block" size={24} />}
             </h1>
             <p className="text-slate-500 text-sm font-medium mt-1">
               Đơn vị: <span className="text-indigo-600 font-bold">{currentUser.unit}</span>
