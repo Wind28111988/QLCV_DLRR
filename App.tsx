@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { User, Task, TaskStatus, TaskComplexity } from './types';
+import { User, Task, TaskStatus, TaskComplexity, Attachment } from './types';
 import { INITIAL_USERS, INITIAL_TASKS } from './constants';
 import { Menu, Loader2, RefreshCw } from 'lucide-react';
 import { cloudStorage } from './storage';
@@ -15,8 +15,8 @@ import ImportData from './components/ImportData';
 import UserProfile from './components/UserProfile';
 
 const App: React.FC = () => {
-  const [users, setUsers] = useState<User[]>(INITIAL_USERS);
-  const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
+  const [users, setUsers] = useState<User[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -25,58 +25,46 @@ const App: React.FC = () => {
   const [viewedUserId, setViewedUserId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  const initialLoadDone = useRef(false);
-
+  // Tải dữ liệu từ Supabase khi khởi chạy
   useEffect(() => {
     const initData = async () => {
       try {
-        const [cloudUsers, cloudTasks] = await Promise.all([
-          cloudStorage.get<User[]>('gdt_users', INITIAL_USERS),
-          cloudStorage.get<Task[]>('gdt_tasks', INITIAL_TASKS)
+        const [dbUsers, dbTasks] = await Promise.all([
+          cloudStorage.getUsers(),
+          cloudStorage.getTasks()
         ]);
         
-        setUsers(cloudUsers);
-        setTasks(cloudTasks);
+        // Nếu DB trống (lần đầu), sử dụng dữ liệu mặc định và đẩy lên DB
+        if (dbUsers.length === 0) {
+          for (const u of INITIAL_USERS) await cloudStorage.upsertUser(u);
+          setUsers(INITIAL_USERS);
+        } else {
+          setUsers(dbUsers);
+        }
 
-        const savedUser = localStorage.getItem('tm_current_user');
-        if (savedUser) {
-          const parsedUser = JSON.parse(savedUser);
-          const stillExists = cloudUsers.find(u => u.id === parsedUser.id);
+        if (dbTasks.length === 0 && dbUsers.length === 0) {
+          // Chỉ insert tasks mặc định nếu là hệ thống mới hoàn toàn
+          setTasks(INITIAL_TASKS);
+        } else {
+          setTasks(dbTasks);
+        }
+
+        // Tự động đăng nhập nếu có session cũ
+        const savedUserStr = localStorage.getItem('tm_current_user');
+        if (savedUserStr) {
+          const parsedUser = JSON.parse(savedUserStr);
+          const latestUsers = dbUsers.length > 0 ? dbUsers : INITIAL_USERS;
+          const stillExists = latestUsers.find(u => u.id === parsedUser.id);
           if (stillExists) setCurrentUser(stillExists);
         }
       } catch (err) {
-        console.error("Failed to load initial data", err);
+        console.error("Supabase Connection Error:", err);
       } finally {
         setIsInitialLoading(false);
-        initialLoadDone.current = true;
       }
     };
     initData();
   }, []);
-
-  useEffect(() => {
-    if (!initialLoadDone.current) return;
-    
-    const sync = async () => {
-      setIsSyncing(true);
-      await Promise.all([
-        cloudStorage.set('gdt_users', users),
-        cloudStorage.set('gdt_tasks', tasks)
-      ]);
-      setIsSyncing(false);
-    };
-
-    const timer = setTimeout(sync, 1000);
-    return () => clearTimeout(timer);
-  }, [users, tasks]);
-
-  useEffect(() => {
-    if (currentUser) {
-      localStorage.setItem('tm_current_user', JSON.stringify(currentUser));
-    } else {
-      localStorage.removeItem('tm_current_user');
-    }
-  }, [currentUser]);
 
   const handleLogin = (user: User) => {
     setCurrentUser(user);
@@ -87,23 +75,34 @@ const App: React.FC = () => {
 
   const handleLogout = () => {
     setCurrentUser(null);
+    localStorage.removeItem('tm_current_user');
     setActiveTab('dashboard');
     setViewedUserId(null);
     setIsSidebarOpen(false);
   };
 
-  const handleChangePassword = (newPass: string) => {
+  const handleChangePassword = async (newPass: string) => {
     if (!currentUser) return;
     const updatedUser = { ...currentUser, password: newPass, mustChangePassword: false };
+    setIsSyncing(true);
+    await cloudStorage.upsertUser(updatedUser);
     setUsers(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
     setCurrentUser(updatedUser);
+    setIsSyncing(false);
   };
 
-  const handleResetPassword = (email: string, newPass: string) => {
-    setUsers(prev => prev.map(u => u.email.toLowerCase() === email.toLowerCase() ? { ...u, password: newPass, mustChangePassword: false } : u));
+  const handleResetPassword = async (email: string, newPass: string) => {
+    const targetUser = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    if (targetUser) {
+      const updated = { ...targetUser, password: newPass, mustChangePassword: false };
+      setIsSyncing(true);
+      await cloudStorage.upsertUser(updated);
+      setUsers(prev => prev.map(u => u.email.toLowerCase() === email.toLowerCase() ? updated : u));
+      setIsSyncing(false);
+    }
   };
 
-  const addTask = (content: string, complexity: TaskComplexity, leadId?: string, collaboratorIds?: string[]) => {
+  const addTask = async (content: string, complexity: TaskComplexity, leadId?: string, collaboratorIds?: string[], attachments?: Attachment[]) => {
     if (!currentUser) return;
     const newTask: Task = {
       id: Math.random().toString(36).substr(2, 9),
@@ -114,45 +113,64 @@ const App: React.FC = () => {
       complexity: complexity,
       leadId: leadId || currentUser.id,
       collaboratorIds: collaboratorIds || [],
-      unit: currentUser.unit
+      unit: currentUser.unit,
+      attachments: attachments || []
     };
+    
+    setIsSyncing(true);
+    await cloudStorage.insertTask(newTask);
     setTasks(prev => [newTask, ...prev]);
+    setIsSyncing(false);
   };
 
-  const updateTaskStatus = (taskId: string, newStatus: TaskStatus) => {
-    setTasks(prev => prev.map(t => {
-      if (t.id === taskId) {
-        return {
-          ...t,
-          status: newStatus,
-          completedTime: newStatus === TaskStatus.COMPLETED ? Date.now() : t.completedTime,
-          startTime: newStatus === TaskStatus.IN_PROGRESS && t.status === TaskStatus.TO_DO ? Date.now() : t.startTime
-        };
-      }
-      return t;
-    }));
-  };
+  const updateTaskStatus = async (taskId: string, newStatus: TaskStatus) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
 
-  const updateTask = (taskId: string, updates: Partial<Task>) => {
+    const updates = {
+      status: newStatus,
+      completedTime: newStatus === TaskStatus.COMPLETED ? Date.now() : task.completedTime,
+      startTime: (newStatus === TaskStatus.IN_PROGRESS && task.status === TaskStatus.TO_DO) ? Date.now() : task.startTime
+    };
+
+    setIsSyncing(true);
+    await cloudStorage.updateTask(taskId, updates);
     setTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updates } : t));
+    setIsSyncing(false);
   };
 
-  const deleteTask = (taskId: string) => {
+  const updateTask = async (taskId: string, updates: Partial<Task>) => {
+    setIsSyncing(true);
+    await cloudStorage.updateTask(taskId, updates);
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updates } : t));
+    setIsSyncing(false);
+  };
+
+  const deleteTask = async (taskId: string) => {
     if (window.confirm('Bạn có chắc chắn muốn xóa công việc này?')) {
+      setIsSyncing(true);
+      await cloudStorage.deleteTask(taskId);
       setTasks(prev => prev.filter(t => t.id !== taskId));
+      setIsSyncing(false);
     }
   };
 
-  const handleImport = (newUsers: User[]) => {
+  const handleImport = async (newUsers: User[]) => {
+    setIsSyncing(true);
+    // Lưu từng user mới vào Supabase
+    for (const u of newUsers) {
+      await cloudStorage.upsertUser(u);
+    }
     setUsers(newUsers);
-    alert('Dữ liệu đã được cập nhật thành công và đang đồng bộ lên đám mây!');
+    setIsSyncing(false);
+    alert('Dữ liệu đã được cập nhật thành công lên hệ thống Cloud!');
   };
 
   if (isInitialLoading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50">
         <Loader2 className="w-12 h-12 text-indigo-600 animate-spin mb-4" />
-        <p className="text-slate-500 font-bold uppercase tracking-widest text-xs">Đang đồng bộ dữ liệu đám mây...</p>
+        <p className="text-slate-500 font-bold uppercase tracking-widest text-xs text-center px-4">Kết nối cơ sở dữ liệu Supabase...</p>
       </div>
     );
   }
@@ -211,7 +229,7 @@ const App: React.FC = () => {
               {isSyncing && <RefreshCw className="text-indigo-400 animate-spin hidden md:block" size={24} />}
             </h1>
             <p className="text-slate-500 text-sm font-medium mt-1">
-              Đơn vị: <span className="text-indigo-600 font-bold">{currentUser.unit}</span>
+              Hệ thống: <span className="text-indigo-600 font-bold tracking-widest uppercase">Supabase Cloud</span>
             </p>
           </div>
           <div className="hidden sm:flex items-center space-x-3 bg-white p-2 rounded-2xl border border-slate-200 shadow-sm">

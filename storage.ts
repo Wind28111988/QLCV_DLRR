@@ -1,76 +1,63 @@
 
-// Các biến này được Vite inject từ Environment Variables của Vercel thông qua vite.config.ts
-const KV_REST_API_URL = (process.env as any).KV_REST_API_URL;
-const KV_REST_API_TOKEN = (process.env as any).KV_REST_API_TOKEN;
+import { supabase } from './supabase';
 
-/**
- * Dịch vụ lưu trữ Cloud sử dụng Vercel KV (Redis REST API)
- * Giúp đồng bộ dữ liệu giữa Máy tính và Điện thoại.
- */
 export const cloudStorage = {
-  async get<T>(key: string, defaultValue: T): Promise<T> {
-    // Nếu chưa cấu hình biến môi trường, dùng tạm localStorage
-    if (!KV_REST_API_URL || !KV_REST_API_TOKEN) {
-      console.warn(`[CloudStorage] Thiếu cấu hình KV cho key: ${key}. Đang sử dụng dữ liệu cục bộ.`);
-      const local = localStorage.getItem(key);
-      return local ? JSON.parse(local) : defaultValue;
+  // Lấy toàn bộ người dùng
+  async getUsers(): Promise<any[]> {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*');
+    if (error) {
+      console.error('Error fetching users:', error);
+      return [];
     }
-
-    try {
-      const response = await fetch(`${KV_REST_API_URL}/get/${key}`, {
-        headers: { 
-          Authorization: `Bearer ${KV_REST_API_TOKEN}`,
-          'Cache-Control': 'no-cache'
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      // Vercel KV trả về kết quả trong trường 'result'
-      if (data.result) {
-        // Lưu lại bản local để hỗ trợ offline sau này
-        localStorage.setItem(key, data.result);
-        return JSON.parse(data.result) as T;
-      }
-      
-      return defaultValue;
-    } catch (error) {
-      console.error(`[CloudStorage] Lỗi khi tải ${key}:`, error);
-      // Nếu lỗi mạng, ưu tiên dùng dữ liệu local cũ
-      const local = localStorage.getItem(key);
-      return local ? JSON.parse(local) : defaultValue;
-    }
+    return data || [];
   },
 
-  async set(key: string, value: any): Promise<void> {
-    const stringifiedValue = JSON.stringify(value);
-    
-    // Luôn lưu local để đảm bảo tốc độ phản hồi UI
-    localStorage.setItem(key, stringifiedValue);
-
-    if (!KV_REST_API_URL || !KV_REST_API_TOKEN) {
-      return;
+  // Lấy toàn bộ công việc
+  async getTasks(): Promise<any[]> {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('*')
+      .order('startTime', { ascending: false });
+    if (error) {
+      console.error('Error fetching tasks:', error);
+      return [];
     }
+    return data || [];
+  },
 
-    try {
-      const response = await fetch(`${KV_REST_API_URL}/set/${key}`, {
-        method: 'POST',
-        headers: { 
-          Authorization: `Bearer ${KV_REST_API_TOKEN}`,
-          'Content-Type': 'application/json'
-        },
-        body: stringifiedValue,
-      });
+  // Thêm hoặc cập nhật User
+  async upsertUser(user: any) {
+    const { error } = await supabase
+      .from('users')
+      .upsert(user);
+    if (error) console.error('Error upserting user:', error);
+  },
 
-      if (!response.ok) {
-        console.error(`[CloudStorage] Không thể lưu ${key} lên Cloud. Status: ${response.status}`);
-      }
-    } catch (error) {
-      console.error(`[CloudStorage] Lỗi kết nối khi lưu ${key}:`, error);
-    }
+  // Thêm công việc mới
+  async insertTask(task: any) {
+    const { error } = await supabase
+      .from('tasks')
+      .insert(task);
+    if (error) console.error('Error inserting task:', error);
+  },
+
+  // Cập nhật công việc
+  async updateTask(taskId: string, updates: any) {
+    const { error } = await supabase
+      .from('tasks')
+      .update(updates)
+      .eq('id', taskId);
+    if (error) console.error('Error updating task:', error);
+  },
+
+  // Xóa công việc
+  async deleteTask(taskId: string) {
+    const { error } = await supabase
+      .from('tasks')
+      .delete()
+      .eq('id', taskId);
+    if (error) console.error('Error deleting task:', error);
   }
 };

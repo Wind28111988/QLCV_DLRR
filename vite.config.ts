@@ -5,7 +5,8 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ mode }) => {
   // Load env file based on `mode` in the current working directory.
   // Set the third parameter to '' to load all envs regardless of the `VITE_` prefix.
-  const env = loadEnv(mode, process.cwd(), '');
+  // Fix: cast process to any to access cwd() if the Process type definition is missing it in the current context.
+  const env = loadEnv(mode, (process as any).cwd(), '');
   
   return {
     plugins: [react()],

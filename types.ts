@@ -16,6 +16,12 @@ export enum Gender {
   FEMALE = 'Nữ'
 }
 
+export interface Attachment {
+  name: string;
+  type: string;
+  data: string; // Base64 string
+}
+
 export interface User {
   id: string;
   name: string;        // Cột A
@@ -24,10 +30,10 @@ export interface User {
   gender: Gender;      // Cột D
   dob: string;         // Cột E
   phone: string;       // Cột F
-  email: string;       // Cột G
+  email: string;       // G
   password: string;    
-  delegateLevel: string; // Cột H (X1, X2, X3...)
-  notes: string;       // Cột I (AD = Admin)
+  delegateLevel: string; // H
+  notes: string;       // I
   mustChangePassword: boolean;
 }
 
@@ -42,6 +48,7 @@ export interface Task {
   leadId: string;
   collaboratorIds: string[];
   unit: string;
+  attachments?: Attachment[];
 }
 
 export interface DashboardStats {
